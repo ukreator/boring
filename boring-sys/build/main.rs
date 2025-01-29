@@ -684,6 +684,10 @@ fn main() {
             "cargo:rustc-link-search=native={}/build",
             bssl_dir.display(),
         );
+        println!(
+            "cargo:rustc-link-search=native={}",
+            bssl_dir.display(),
+        );
     }
 
     if config.features.fips_link_precompiled {
