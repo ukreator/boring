@@ -698,9 +698,9 @@ fn main() {
         link_in_precompiled_bcm_o(&config);
     }
 
-    if let Some(cpp_lib) = get_cpp_runtime_lib(&config) {
-        println!("cargo:rustc-link-lib={}", cpp_lib);
-    }
+    // if let Some(cpp_lib) = get_cpp_runtime_lib(&config) {
+    //    println!("cargo:rustc-link-lib={}", cpp_lib);
+    // }
     // println!("cargo:rustc-link-lib=static=crypto");
     // println!("cargo:rustc-link-lib=static=ssl");
 
