@@ -701,8 +701,8 @@ fn main() {
     if let Some(cpp_lib) = get_cpp_runtime_lib(&config) {
         println!("cargo:rustc-link-lib={}", cpp_lib);
     }
-    println!("cargo:rustc-link-lib=static=crypto");
-    println!("cargo:rustc-link-lib=static=ssl");
+    // println!("cargo:rustc-link-lib=static=crypto");
+    // println!("cargo:rustc-link-lib=static=ssl");
 
     let include_path = config.env.include_path.clone().unwrap_or_else(|| {
         if let Some(bssl_path) = &config.env.path {
