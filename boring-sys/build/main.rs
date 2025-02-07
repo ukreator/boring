@@ -685,6 +685,10 @@ fn main() {
             bssl_dir.display(),
         );
         println!(
+            "cargo:rustc-link-search=native={}/",
+            bssl_dir.display(),
+        );
+        println!(
             "cargo:rustc-link-search=native={}",
             bssl_dir.display(),
         );
