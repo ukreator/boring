@@ -3902,6 +3902,41 @@ impl<S: Read + Write> SslStream<S> {
             Err(self.make_error(ret))
         }
     }
+
+    /// Gets the next timeout value for DTLS handshake.
+    #[corresponds(DTLSv1_get_timeout)]
+    pub fn dtls_timeout(&self) -> Option<std::time::Duration> {
+        let (ret, timeout) = unsafe {
+            let mut timeout = ffi::timeval {
+                tv_sec: 0,
+                tv_usec: 0,
+            };
+            let ret = ffi::DTLSv1_get_timeout(self.ssl.as_ptr(), &mut timeout);
+            (ret, timeout)
+        };
+
+        if ret == 1 {
+            Some(std::time::Duration::new(timeout.tv_sec as u64, (timeout.tv_usec as u32) * 1000))
+        } else {
+            None
+        }
+    }
+
+    /// Called when DTLS timer expires.
+    #[corresponds(DTLSv1_handle_timeout)]
+    pub fn dtls_handle_timeout(&mut self) -> DtlsGetTimeoutResult {
+        let ret = unsafe { ffi::DTLSv1_handle_timeout(self.ssl.as_ptr()) };
+
+        // If no timeout had expired, it returns 0. Otherwise, it retransmits the previous
+        // flight of handshake messages and returns 1. If too many timeouts had expired
+        // without progress or an error occurs, it returns -1.
+        match ret {
+            0 => DtlsGetTimeoutResult::NoTimeout,
+            1 => DtlsGetTimeoutResult::Retransmit,
+            -1 => DtlsGetTimeoutResult::NoProgressOrError,
+            _ => unreachable!(), // TODO: not a good idea to do this here
+        }
+    }
 }
 
 impl<S> SslStream<S> {
@@ -4191,6 +4226,12 @@ bitflags! {
         /// A close notify message has been received from the peer.
         const RECEIVED = ffi::SSL_RECEIVED_SHUTDOWN;
     }
+}
+
+pub enum DtlsGetTimeoutResult {
+    NoTimeout,
+    Retransmit,
+    NoProgressOrError,
 }
 
 /// Describes private key hooks. This is used to off-load signing operations to
