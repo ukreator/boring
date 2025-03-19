@@ -3690,6 +3690,41 @@ impl<S> MidHandshakeSslStream<S> {
             }
         }
     }
+
+    /// Gets the next timeout value for DTLS handshake.
+    #[corresponds(DTLSv1_get_timeout)]
+    pub fn dtls_timeout(&self) -> Option<std::time::Duration> {
+        let (ret, timeout) = unsafe {
+            let mut timeout = ffi::timeval {
+                tv_sec: 0,
+                tv_usec: 0,
+            };
+            let ret = ffi::DTLSv1_get_timeout(self.stream.ssl.as_ptr(), &mut timeout);
+            (ret, timeout)
+        };
+
+        if ret == 1 {
+            Some(std::time::Duration::new(timeout.tv_sec as u64, (timeout.tv_usec as u32) * 1000))
+        } else {
+            None
+        }
+    }
+
+    /// Called when DTLS timer expires.
+    #[corresponds(DTLSv1_handle_timeout)]
+    pub fn dtls_handle_timeout(&mut self) -> DtlsGetTimeoutResult {
+        let ret = unsafe { ffi::DTLSv1_handle_timeout(self.stream.ssl.as_ptr()) };
+
+        // If no timeout had expired, it returns 0. Otherwise, it retransmits the previous
+        // flight of handshake messages and returns 1. If too many timeouts had expired
+        // without progress or an error occurs, it returns -1.
+        match ret {
+            0 => DtlsGetTimeoutResult::NoTimeout,
+            1 => DtlsGetTimeoutResult::Retransmit,
+            -1 => DtlsGetTimeoutResult::NoProgressOrError,
+            _ => unreachable!(), // TODO: not a good idea to do this here
+        }
+    }
 }
 
 /// A TLS session over a stream.
@@ -3900,41 +3935,6 @@ impl<S: Read + Write> SslStream<S> {
             Ok(())
         } else {
             Err(self.make_error(ret))
-        }
-    }
-
-    /// Gets the next timeout value for DTLS handshake.
-    #[corresponds(DTLSv1_get_timeout)]
-    pub fn dtls_timeout(&self) -> Option<std::time::Duration> {
-        let (ret, timeout) = unsafe {
-            let mut timeout = ffi::timeval {
-                tv_sec: 0,
-                tv_usec: 0,
-            };
-            let ret = ffi::DTLSv1_get_timeout(self.ssl.as_ptr(), &mut timeout);
-            (ret, timeout)
-        };
-
-        if ret == 1 {
-            Some(std::time::Duration::new(timeout.tv_sec as u64, (timeout.tv_usec as u32) * 1000))
-        } else {
-            None
-        }
-    }
-
-    /// Called when DTLS timer expires.
-    #[corresponds(DTLSv1_handle_timeout)]
-    pub fn dtls_handle_timeout(&mut self) -> DtlsGetTimeoutResult {
-        let ret = unsafe { ffi::DTLSv1_handle_timeout(self.ssl.as_ptr()) };
-
-        // If no timeout had expired, it returns 0. Otherwise, it retransmits the previous
-        // flight of handshake messages and returns 1. If too many timeouts had expired
-        // without progress or an error occurs, it returns -1.
-        match ret {
-            0 => DtlsGetTimeoutResult::NoTimeout,
-            1 => DtlsGetTimeoutResult::Retransmit,
-            -1 => DtlsGetTimeoutResult::NoProgressOrError,
-            _ => unreachable!(), // TODO: not a good idea to do this here
         }
     }
 }
