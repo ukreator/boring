@@ -25,6 +25,7 @@ use std::io::{self, Write};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use pin_project::pin_project;
 
 mod async_callbacks;
 mod bridge;
@@ -54,7 +55,7 @@ where
         .setup_connect(domain, AsyncStreamBridge::new(stream))
         .map_err(|err| HandshakeError(ssl::HandshakeError::SetupFailure(err)))?;
 
-    HandshakeFuture(Some(mid_handshake)).await
+    HandshakeFuture::new(mid_handshake).await
 }
 
 /// Asynchronously performs a server-side TLS handshake over the provided stream.
@@ -69,7 +70,7 @@ where
         .setup_accept(AsyncStreamBridge::new(stream))
         .map_err(|err| HandshakeError(ssl::HandshakeError::SetupFailure(err)))?;
 
-    HandshakeFuture(Some(mid_handshake)).await
+    HandshakeFuture::new(mid_handshake).await
 }
 
 fn cvt<T>(r: io::Result<T>) -> Poll<io::Result<T>> {
@@ -100,14 +101,14 @@ where
     pub async fn accept(self) -> Result<SslStream<S>, HandshakeError<S>> {
         let mid_handshake = self.inner.setup_accept();
 
-        HandshakeFuture(Some(mid_handshake)).await
+        HandshakeFuture::new(mid_handshake).await
     }
 
     /// Initiates a server-side TLS handshake.
     pub async fn connect(self) -> Result<SslStream<S>, HandshakeError<S>> {
         let mid_handshake = self.inner.setup_connect();
 
-        HandshakeFuture(Some(mid_handshake)).await
+        HandshakeFuture::new(mid_handshake).await
     }
 }
 
@@ -322,7 +323,27 @@ where
 /// Future for an ongoing TLS handshake.
 ///
 /// See [`connect`] and [`accept`].
-pub struct HandshakeFuture<S>(Option<MidHandshakeSslStream<AsyncStreamBridge<S>>>);
+#[pin_project]
+pub struct HandshakeFuture<S> {
+    #[pin]
+    mid_handshake: Option<MidHandshakeSslStream<AsyncStreamBridge<S>>>,
+
+    #[pin]
+    dtls_sleep: tokio::time::Sleep,
+}
+
+impl<S> HandshakeFuture<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin
+{
+    /// Create a new `HandshakeFuture` wrapping the given `MidHandshakeSslStream`.
+    pub(crate) fn new(mid_handshake: MidHandshakeSslStream<AsyncStreamBridge<S>>) -> Self {
+        Self {
+            mid_handshake: Some(mid_handshake),
+            dtls_sleep: tokio::time::sleep(Default::default()),
+        }
+    }
+}
 
 impl<S> Future for HandshakeFuture<S>
 where
@@ -331,7 +352,44 @@ where
     type Output = Result<SslStream<S>, HandshakeError<S>>;
 
     fn poll(mut self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut mid_handshake = self.0.take().expect("future polled after completion");
+        let mut mid_handshake = self.mid_handshake.take().expect("future polled after completion");
+
+        // let mut sleep = self.dtls_sleep.as_pin_mut();
+        // if self.dtls_sleep.is_some() {
+            match self.dtls_sleep.poll(ctx) {
+                Poll::Ready(_) => {
+                    // self.dtls_sleep = None;
+
+                    // DTLS timeout happened so we need to ask BoringSSL to handle it (potentially sends a retransmit msg)
+                    match mid_handshake.ssl_mut().dtls_handle_timeout() {
+                            DtlsGetTimeoutResult::NoTimeout => {
+                                warn!("no timeout");
+                            },
+                            DtlsGetTimeoutResult::Retransmit => {
+                                warn!("retransmit");
+                            },
+                            DtlsGetTimeoutResult::NoProgressOrError => {
+                                warn!("no progress or error");
+                            }
+
+                        Ok(_) => {}
+                        Err(ssl::HandshakeError::WouldBlock(mut mid_handshake)) => {
+                            self.mid_handshake = Some(mid_handshake);
+                            return Poll::Pending;
+                        }
+                        Err(ssl::HandshakeError::Failure(mid_handshake)) => {
+                            return Poll::Ready(Err(HandshakeError(ssl::HandshakeError::Failure(mid_handshake))));
+                        }
+                    }
+
+                    return Poll::Ready(Err(HandshakeError(ssl::HandshakeError::Failure(mid_handshake))));
+                }
+                Poll::Pending => {
+                    self.mid_handshake = Some(mid_handshake);
+                    return Poll::Pending;
+                }
+            }
+        // }
 
         mid_handshake.get_mut().set_waker(Some(ctx));
         mid_handshake
@@ -349,7 +407,21 @@ where
                 mid_handshake.get_mut().set_waker(None);
                 mid_handshake.ssl_mut().set_task_waker(None);
 
-                self.0 = Some(mid_handshake);
+                self.mid_handshake = Some(mid_handshake);
+
+                // FIXME: set new timer
+                // match stream.dtls_handle_timeout() {
+                //     DtlsGetTimeoutResult::NoTimeout => {
+                //         warn!("no timeout");
+                //     },
+                //     DtlsGetTimeoutResult::Retransmit => {
+                //         warn!("retransmit");
+                //     },
+                //     DtlsGetTimeoutResult::NoProgressOrError => {
+                //         warn!("no progress or error");
+                //     }
+                // };
+
 
                 Poll::Pending
             }

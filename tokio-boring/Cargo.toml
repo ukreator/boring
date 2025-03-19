@@ -32,6 +32,7 @@ rpk = ["boring/rpk"]
 boring = { workspace = true }
 boring-sys = { workspace = true }
 tokio = { workspace = true }
+pin-project = { workspace = true }
 
 [dev-dependencies]
 futures = { workspace = true }
